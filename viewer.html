@@ -274,13 +274,23 @@
     let boxFilters   = [];
 
     function isDotVisible(i) {
+      const x = items[i].t.frequency / 1e6;
+      const y = new Date(items[i].b.startTime).getTime();
+
+      // Box filters use live data-coordinate bounds; lasso filters use precomputed geographic sets.
+      function inFilter(f) {
+        if (f.dataX1 !== undefined) {
+          return x >= f.dataX1 && x <= f.dataX2 && y >= f.dataY1 && y <= f.dataY2;
+        }
+        return f.set.has(i);
+      }
+
       const all      = [...lassoFilters, ...boxFilters];
       const includes = all.filter(f =>  f.include);
       const excludes = all.filter(f => !f.include);
-      // Any exclude hides the point; among includes, any match shows it (OR across types)
-      if (excludes.some(f => f.set.has(i))) return false;
+      if (excludes.some(f => inFilter(f))) return false;
       if (includes.length === 0) return true;
-      return includes.some(f => f.set.has(i));
+      return includes.some(f => inFilter(f));
     }
 
     // ── ECHARTS DATA ──────────────────────────────────────────────────────────
@@ -676,7 +686,10 @@
             selectedBoxIdx = -1;
             filterMenuEl.classList.remove('visible');
             filterMenuType = null; filterMenuIdx = -1;
-          } else if (selectedBoxIdx > idx) selectedBoxIdx--;
+          } else if (selectedBoxIdx > idx) {
+            selectedBoxIdx--;
+            if (filterMenuType === 'box') filterMenuIdx--;
+          }
           updateBoxClearBtn();
           renderBoxOverlays();
           updateScatterColors();
