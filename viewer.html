@@ -288,9 +288,11 @@
       const all      = [...lassoFilters, ...boxFilters];
       const includes = all.filter(f =>  f.include);
       const excludes = all.filter(f => !f.include);
+      // Includes are checked first — a point inside any include is always shown.
+      // Excludes only remove points that no include is protecting.
+      if (includes.some(f => inFilter(f))) return true;
       if (excludes.some(f => inFilter(f))) return false;
-      if (includes.length === 0) return true;
-      return includes.some(f => inFilter(f));
+      return includes.length === 0;
     }
 
     // ── ECHARTS DATA ──────────────────────────────────────────────────────────
