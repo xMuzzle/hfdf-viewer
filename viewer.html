@@ -78,7 +78,7 @@
     .panel-label-text { flex-shrink: 0; }
     .panel-label-controls { display: flex; gap: 6px; align-items: center; }
 
-    #scatter { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+    #scatter { flex: 1; min-height: 120px; position: relative; overflow: hidden; }
     #scatter-chart { position: absolute; inset: 0; }
     #cesium-container { flex: 1; min-height: 0; }
 
@@ -209,6 +209,61 @@
 
     /* Hide Plotly modebar */
     .modebar { display: none !important; }
+
+    /* Data table */
+    #table-wrap {
+      flex: 0 0 35%;
+      min-height: 0;
+      overflow-y: auto;
+      border-top: 1px solid #1a3050;
+      scrollbar-width: thin;
+      scrollbar-color: #1a3050 #0c1220;
+    }
+    #data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9px;
+      letter-spacing: 0.5px;
+    }
+    #data-table thead {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    #data-table th {
+      background: #0c1220;
+      color: #4a9eff;
+      padding: 5px 8px;
+      text-align: left;
+      font-weight: normal;
+      letter-spacing: 1px;
+      border-bottom: 1px solid #1a3050;
+      white-space: nowrap;
+    }
+    #data-table td {
+      padding: 4px 8px;
+      color: #8aa8d0;
+      border-bottom: 1px solid #0e1a2a;
+      white-space: nowrap;
+    }
+    #data-table tr.tbl-row { cursor: pointer; }
+    #data-table tr.tbl-row:hover { background: #121e30; }
+    #data-table tr.tbl-row.selected { background: #1a2a10; }
+    #data-table tr.tbl-row.selected td { color: #ff9600; }
+    #data-table tr.tbl-row.dimmed td { color: #353548; }
+    #data-table th.sortable { cursor: pointer; user-select: none; }
+    #data-table th.sortable:hover { color: #7ac0ff; }
+    #data-table th.sortable .sort-arrow { margin-left: 3px; font-size: 8px; color: #3a6a9a; }
+    #data-table th.sortable.sort-asc .sort-arrow::after { content: '\25B2'; color: #4a9eff; }
+    #data-table th.sortable.sort-desc .sort-arrow::after { content: '\25BC'; color: #4a9eff; }
+    #data-table .filter-row th { padding: 2px 4px; }
+    #data-table .filter-input {
+      width: 100%; background: #0a0f1a; border: 1px solid #1a3050; color: #8aa8d0;
+      font-family: 'Courier New', monospace; font-size: 8px; padding: 2px 4px;
+      outline: none; letter-spacing: 0.5px;
+    }
+    #data-table .filter-input:focus { border-color: #4a9eff; }
+    #data-table .filter-input::placeholder { color: #2a3a50; }
   </style>
 </head>
 <body>
@@ -232,6 +287,31 @@
         <div id="box-overlay"></div>
         <div id="box-draw"></div>
       </div>
+      <div id="table-wrap">
+        <table id="data-table">
+          <thead>
+            <tr>
+              <th class="sortable" data-col="idx">#<span class="sort-arrow"></span></th>
+              <th class="sortable" data-col="freq">FREQ (MHz)<span class="sort-arrow"></span></th>
+              <th class="sortable" data-col="time">TIME (UTC)<span class="sort-arrow"></span></th>
+              <th class="sortable" data-col="lat">LAT<span class="sort-arrow"></span></th>
+              <th class="sortable" data-col="lon">LON<span class="sort-arrow"></span></th>
+              <th class="sortable" data-col="srcIP">SRC IP<span class="sort-arrow"></span></th>
+              <th class="sortable" data-col="dstIP">DST IP<span class="sort-arrow"></span></th>
+            </tr>
+            <tr class="filter-row">
+              <th></th>
+              <th><input class="filter-input" data-col="freq" placeholder="e.g. >5, 3..8"></th>
+              <th><input class="filter-input" data-col="time" placeholder="e.g. 2024-01"></th>
+              <th><input class="filter-input" data-col="lat" placeholder="e.g. >40"></th>
+              <th><input class="filter-input" data-col="lon" placeholder="e.g. -30..-10"></th>
+              <th><input class="filter-input" data-col="srcIP" placeholder="e.g. 10.152"></th>
+              <th><input class="filter-input" data-col="dstIP" placeholder="e.g. 172.16"></th>
+            </tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
     </div>
     <div id="globe-panel">
       <div class="panel-label">
@@ -247,6 +327,8 @@
         <div class="info-row">MAJOR &nbsp;: <span class="info-value" id="info-major">--</span></div>
         <div class="info-row">MINOR &nbsp;: <span class="info-value" id="info-minor">--</span></div>
         <div class="info-row">ORIENT : <span class="info-value" id="info-orient">--</span></div>
+        <div class="info-row">SRC IP : <span class="info-value" id="info-srcip">--</span></div>
+        <div class="info-row">DST IP : <span class="info-value" id="info-dstip">--</span></div>
       </div>
       <div id="reset-hint">SCATTER DBL-CLICK: RESET &nbsp;|&nbsp; LASSO: LEFT=ADD PT &nbsp; RIGHT=CLOSE</div>
       <button id="view-toggle">2D MAP</button>
@@ -277,6 +359,9 @@
     let boxFilters   = [];
 
     function isDotVisible(i) {
+      // table filter: if active and item not in filtered set, hide it
+      if (tableFilterSet && !tableFilterSet.has(i)) return false;
+
       const x = items[i].t.frequency / 1e6;
       const y = new Date(items[i].b.startTime).getTime();
 
@@ -356,6 +441,105 @@
     const COLOR_DEFAULT  = Cesium.Color.fromCssColorString('#4a9eff');
     const COLOR_SELECTED = Cesium.Color.fromCssColorString('#ff9600');
     const COLOR_DIM      = Cesium.Color.fromCssColorString('#505064').withAlpha(0.25);
+
+    let arcEntities = [];
+    let arcPackets = [];   // { entity, positions, offset }
+    let arcAnimId = null;
+
+    function clearArcs() {
+      if (arcAnimId) { cancelAnimationFrame(arcAnimId); arcAnimId = null; }
+      arcEntities.forEach(e => viewer.entities.remove(e));
+      arcPackets.forEach(p => viewer.entities.remove(p.entity));
+      arcEntities = [];
+      arcPackets = [];
+    }
+
+    const BEAM_LEN = 8; // number of arc segments in the beam
+
+    function animatePackets() {
+      arcAnimId = requestAnimationFrame(animatePackets);
+    }
+
+    function isMode3D() {
+      return viewer.scene.mode === Cesium.SceneMode.SCENE3D;
+    }
+
+    function buildArcPositions(srcLat, srcLon, dstLat, dstLon) {
+      const positions = [];
+      const steps = 60;
+      const use3D = isMode3D();
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        const lat = srcLat + (dstLat - srcLat) * t;
+        const lon = srcLon + (dstLon - srcLon) * t;
+        const alt = use3D ? Math.sin(t * Math.PI) * 400000 : 0;
+        positions.push(Cesium.Cartesian3.fromDegrees(lon, lat, alt));
+      }
+      return positions;
+    }
+
+    function drawArcs(idx) {
+      clearArcs();
+      const item = items[idx];
+      const p = item.b.payload && item.b.payload[0];
+      if (!p || !p.dstIP) return;
+
+      const srcLat = item.b.latitude, srcLon = item.b.longitude;
+      const flat = !isMode3D();
+      let arcIdx = 0;
+
+      items.forEach((other, j) => {
+        if (j === idx) return;
+        const op = other.b.payload && other.b.payload[0];
+        if (!op || op.srcIP !== p.dstIP) return;
+
+        const positions = buildArcPositions(srcLat, srcLon, other.b.latitude, other.b.longitude);
+
+        // Dim trail line
+        const arc = viewer.entities.add({
+          polyline: {
+            positions,
+            width: 3,
+            material: new Cesium.PolylineGlowMaterialProperty({
+              glowPower: 0.25,
+              color: Cesium.Color.fromCssColorString('#ff9600').withAlpha(0.35)
+            }),
+            clampToGround: flat
+          }
+        });
+        arcEntities.push(arc);
+
+        // Animated beam of light that flies along the arc
+        const beamOffset = performance.now() + arcIdx * 400;
+        const beamPositions = positions;
+        const packet = viewer.entities.add({
+          polyline: {
+            positions: new Cesium.CallbackProperty(() => {
+              const period = 3500;
+              const t = ((performance.now() - beamOffset) % period) / period;
+              const head = Math.min(Math.floor(t * beamPositions.length), beamPositions.length - 1);
+              const tail = Math.max(0, head - BEAM_LEN);
+              return beamPositions.slice(tail, head + 1);
+            }, false),
+            width: 4,
+            material: new Cesium.PolylineGlowMaterialProperty({
+              glowPower: 0.35,
+              color: Cesium.Color.fromCssColorString('#ffcc00')
+            }),
+            clampToGround: flat
+          }
+        });
+        arcPackets.push({ entity: packet, positions, offset: beamOffset });
+        arcIdx++;
+      });
+
+      if (arcPackets.length > 0) animatePackets();
+    }
+
+    // Redraw arcs when switching between 2D/3D modes
+    viewer.scene.morphComplete.addEventListener(() => {
+      if (selectedIdx !== null) drawArcs(selectedIdx);
+    });
 
     function updateCesiumColors() {
       entities.forEach((entity, i) => {
@@ -937,6 +1121,7 @@
           window.addEventListener('resize', () => { renderBoxOverlays(); });
         });
 
+        buildTable();
         document.getElementById('status').textContent = `READY \u2014 ${transmissions.length} TX | ${items.length} BURSTS`;
       })
       .catch(err => {
@@ -975,7 +1160,168 @@
       document.getElementById('info-major').textContent  = `${b.major_axis} mi`;
       document.getElementById('info-minor').textContent  = `${b.minor_axis} mi`;
       document.getElementById('info-orient').textContent = `${b.orientation}\u00b0`;
+      const p = b.payload && b.payload[0];
+      document.getElementById('info-srcip').textContent  = (p && p.srcIP) || '--';
+      document.getElementById('info-dstip').textContent  = (p && p.dstIP) || '--';
       document.getElementById('info-panel').classList.add('visible');
+    }
+
+    let tableSortCol = 'idx', tableSortAsc = true;
+    let tableFilters = {};
+    let tableSortedIndices = [];
+    let tableFilterSet = null; // null = no table filter active, Set = active filtered indices
+    let hasActiveTableFilter = false;
+
+    function getColValue(item, i, col) {
+      switch (col) {
+        case 'idx':   return i;
+        case 'freq':  return item.t.frequency / 1e6;
+        case 'time':  return item.b.startTime;
+        case 'lat':   return item.b.latitude;
+        case 'lon':   return item.b.longitude;
+        case 'srcIP': return (item.b.payload && item.b.payload[0] && item.b.payload[0].srcIP) || '';
+        case 'dstIP': return (item.b.payload && item.b.payload[0] && item.b.payload[0].dstIP) || '';
+      }
+    }
+
+    function parseFilterExpr(expr) {
+      expr = expr.trim();
+      if (!expr) return null;
+      // range: "3..8"
+      const rangeMatch = expr.match(/^(-?[\d.]+)\s*\.\.\s*(-?[\d.]+)$/);
+      if (rangeMatch) return { type: 'range', lo: parseFloat(rangeMatch[1]), hi: parseFloat(rangeMatch[2]) };
+      // comparison: ">5", ">=5", "<5", "<=5"
+      const cmpMatch = expr.match(/^([<>]=?)\s*(-?[\d.]+)$/);
+      if (cmpMatch) return { type: 'cmp', op: cmpMatch[1], val: parseFloat(cmpMatch[2]) };
+      // substring match (for time column, etc.)
+      return { type: 'text', text: expr.toLowerCase() };
+    }
+
+    function matchesFilter(parsed, numVal, textVal) {
+      if (!parsed) return true;
+      switch (parsed.type) {
+        case 'range': return numVal >= parsed.lo && numVal <= parsed.hi;
+        case 'cmp':
+          if (parsed.op === '>')  return numVal > parsed.val;
+          if (parsed.op === '>=') return numVal >= parsed.val;
+          if (parsed.op === '<')  return numVal < parsed.val;
+          if (parsed.op === '<=') return numVal <= parsed.val;
+          return true;
+        case 'text': return textVal.toLowerCase().includes(parsed.text);
+      }
+    }
+
+    function getColText(item, i) {
+      const p = item.b.payload && item.b.payload[0];
+      return {
+        idx:   String(i + 1),
+        freq:  (item.t.frequency / 1e6).toFixed(3),
+        time:  item.b.startTime.replace('T', ' ').replace('Z', ''),
+        lat:   item.b.latitude.toFixed(3),
+        lon:   item.b.longitude.toFixed(3),
+        srcIP: (p && p.srcIP) || '--',
+        dstIP: (p && p.dstIP) || '--'
+      };
+    }
+
+    function rebuildTable() {
+      const filterCols = ['freq', 'time', 'lat', 'lon', 'srcIP', 'dstIP'];
+      const parsedFilters = {};
+      for (const col of filterCols) {
+        parsedFilters[col] = parseFilterExpr(tableFilters[col] || '');
+      }
+
+      // filter
+      tableSortedIndices = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const texts = getColText(item, i);
+        let pass = true;
+        for (const col of filterCols) {
+          if (!parsedFilters[col]) continue;
+          const num = getColValue(item, i, col);
+          if (!matchesFilter(parsedFilters[col], typeof num === 'number' ? num : NaN, texts[col])) {
+            pass = false; break;
+          }
+        }
+        if (pass) tableSortedIndices.push(i);
+      }
+
+      // sort
+      tableSortedIndices.sort((a, b) => {
+        let va = getColValue(items[a], a, tableSortCol);
+        let vb = getColValue(items[b], b, tableSortCol);
+        if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
+        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        return tableSortAsc ? cmp : -cmp;
+      });
+
+      // render
+      const tbody = document.getElementById('table-body');
+      tbody.innerHTML = '';
+      tableSortedIndices.forEach(i => {
+        const item = items[i];
+        const texts = getColText(item, i);
+        const tr = document.createElement('tr');
+        tr.className = 'tbl-row';
+        tr.dataset.idx = i;
+        tr.innerHTML = `<td>${texts.idx}</td><td>${texts.freq}</td><td>${texts.time}</td><td>${texts.lat}</td><td>${texts.lon}</td><td>${texts.srcIP}</td><td>${texts.dstIP}</td>`;
+        tr.addEventListener('click', () => {
+          selectTransmission(i);
+          zoomCesiumTo(i);
+          zoomScatterTo(i);
+        });
+        tbody.appendChild(tr);
+      });
+
+      // update table filter set for cross-view sync
+      hasActiveTableFilter = Object.values(tableFilters).some(v => v.trim() !== '');
+      tableFilterSet = hasActiveTableFilter ? new Set(tableSortedIndices) : null;
+
+      updateTableSelection();
+      updateScatterColors();
+    }
+
+    function buildTable() {
+      // sort headers
+      document.querySelectorAll('#data-table th.sortable').forEach(th => {
+        th.addEventListener('click', () => {
+          const col = th.dataset.col;
+          if (tableSortCol === col) { tableSortAsc = !tableSortAsc; }
+          else { tableSortCol = col; tableSortAsc = true; }
+          document.querySelectorAll('#data-table th.sortable').forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+          th.classList.add(tableSortAsc ? 'sort-asc' : 'sort-desc');
+          rebuildTable();
+        });
+      });
+      // filter inputs
+      document.querySelectorAll('#data-table .filter-input').forEach(inp => {
+        inp.addEventListener('input', () => {
+          tableFilters[inp.dataset.col] = inp.value;
+          rebuildTable();
+        });
+      });
+      // initial sort indicator
+      const initTh = document.querySelector('#data-table th.sortable[data-col="idx"]');
+      if (initTh) initTh.classList.add('sort-asc');
+      rebuildTable();
+    }
+
+    function updateTableSelection() {
+      const rows = document.querySelectorAll('#table-body .tbl-row');
+      rows.forEach(r => r.classList.toggle('selected', Number(r.dataset.idx) === selectedIdx));
+      if (selectedIdx !== null) {
+        const sel = document.querySelector(`#table-body .tbl-row[data-idx="${selectedIdx}"]`);
+        if (sel) sel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+
+    function updateTableDimming() {
+      const rows = document.querySelectorAll('#table-body .tbl-row');
+      rows.forEach(r => {
+        const i = Number(r.dataset.idx);
+        r.classList.toggle('dimmed', !isDotVisible(i));
+      });
     }
 
     function updateScatterColors() {
@@ -987,6 +1333,7 @@
         }, [0]);
       }
       updateCesiumColors();
+      updateTableDimming();
     }
 
     function selectTransmission(idx) {
@@ -994,14 +1341,18 @@
       updateCesiumColors();
       updateScatterColors();
       updateInfoPanel(idx);
+      updateTableSelection();
+      drawArcs(idx);
       const { txIdx, burstIdx, t } = items[idx];
       document.getElementById('status').textContent = `TX ${txIdx + 1}/${transmissions.length} \u00b7 BURST ${burstIdx + 1}/${t.numBursts}`;
     }
 
     function deselect() {
       selectedIdx = null;
+      clearArcs();
       updateCesiumColors();
       updateScatterColors();
+      updateTableSelection();
       document.getElementById('info-panel').classList.remove('visible');
       document.getElementById('status').textContent = 'READY';
     }

@@ -10,6 +10,8 @@ const NUM_TRANSMISSIONS = 20;
 const MAX_BURSTS        = 15;
 // Jitter in degrees around a cluster center (represents DF uncertainty)
 const JITTER_DEG        = 12;
+// Tighter jitter for two-way (dual-cluster) transmissions — simulates better fix accuracy
+const JITTER_DEG_TWOWAY = 4;
 // Minimum angular separation (lat+lon) required between two cluster centers
 const MIN_CLUSTER_SEP   = 45;
 
@@ -51,12 +53,34 @@ function clampLat(lat) {
 }
 
 // Generate a burst lat/lon near a cluster center with random jitter
-function jitteredPoint(center) {
+function jitteredPoint(center, jitter) {
+  jitter = jitter || JITTER_DEG;
   return {
-    latitude:  parseFloat(clampLat(center.lat + rand(-JITTER_DEG, JITTER_DEG)).toFixed(4)),
-    longitude: parseFloat(wrapLon(center.lon   + rand(-JITTER_DEG, JITTER_DEG)).toFixed(4))
+    latitude:  parseFloat(clampLat(center.lat + rand(-jitter, jitter)).toFixed(4)),
+    longitude: parseFloat(wrapLon(center.lon   + rand(-jitter, jitter)).toFixed(4))
   };
 }
+
+// -- IP address pools --
+// Generate a random private-ish IP in a given subnet prefix
+function randIP(prefix) {
+  const octets = prefix.split('.').length;
+  const parts = prefix.split('.');
+  while (parts.length < 4) parts.push(randInt(1, 254));
+  return parts.join('.');
+}
+
+// Two-way pool: pairs of IPs for conversations between two clusters
+const TWO_WAY_PAIRS = Array.from({ length: 20 }, () => [
+  randIP('10.' + randInt(1, 254)),
+  randIP('10.' + randInt(1, 254))
+]);
+
+// Single pool: IPs for single-cluster transmissions connecting to each other
+const SINGLE_POOL = Array.from({ length: 15 }, () => randIP('172.16.' + randInt(1, 254)));
+
+let twoWayPairIdx = 0;
+let singlePoolIdx = 0;
 
 const baseTime = new Date('2024-03-15T00:00:00Z');
 
@@ -76,6 +100,21 @@ const transmissions = Array.from({ length: NUM_TRANSMISSIONS }, () => {
     clusters.push(c2);
   }
 
+  // Assign IPs based on cluster count
+  let ipA, ipB;
+  if (numClusters === 2) {
+    const pair = TWO_WAY_PAIRS[twoWayPairIdx++ % TWO_WAY_PAIRS.length];
+    ipA = pair[0];
+    ipB = pair[1];
+  } else {
+    ipA = SINGLE_POOL[singlePoolIdx++ % SINGLE_POOL.length];
+    // Pick a different single-pool IP as the destination
+    let destIdx;
+    do { destIdx = randInt(0, SINGLE_POOL.length - 1); }
+    while (SINGLE_POOL[destIdx] === ipA && SINGLE_POOL.length > 1);
+    ipB = SINGLE_POOL[destIdx];
+  }
+
   // TX window wide enough to hold all bursts
   const txStartMs = baseTime.getTime() + randInt(0, 22 * 3600) * 1000;
   const txDurSec  = randInt(numBursts * 120, numBursts * 600 + 1800);
@@ -88,11 +127,19 @@ const transmissions = Array.from({ length: NUM_TRANSMISSIONS }, () => {
   ).sort((a, b) => a - b);
 
   const bursts = burstMs.map(ms => {
-    const center = clusters[randInt(0, clusters.length - 1)];
-    const { latitude, longitude } = jitteredPoint(center);
+    const clusterIdx = randInt(0, clusters.length - 1);
+    const center = clusters[clusterIdx];
+    const jitter = numClusters === 2 ? JITTER_DEG_TWOWAY : JITTER_DEG;
+    const { latitude, longitude } = jitteredPoint(center, jitter);
+
+    // For two-cluster TX: src/dst swap based on which cluster this burst belongs to
+    // For single-cluster TX: src is always ipA, dst is always ipB
+    const srcIP = (numClusters === 2 && clusterIdx === 1) ? ipB : ipA;
+    const dstIP = (numClusters === 2 && clusterIdx === 1) ? ipA : ipB;
+
     return {
       startTime:   isoDate(new Date(ms)),
-      payload:     [],
+      payload:     [{ srcIP, dstIP }],
       latitude,
       longitude,
       major_axis:  parseFloat(rand(90, 160).toFixed(1)),

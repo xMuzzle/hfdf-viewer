@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "transmissions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["transmissionUUID", "frequency", "startTime", "endTime", "numBursts", "bursts"],
+        "properties": {
+          "transmissionUUID": {
+            "type": ["string", "null"]
+          },
+          "frequency": {
+            "type": "integer"
+          },
+          "startTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "numBursts": {
+            "type": "integer"
+          },
+          "bursts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["startTime", "payload", "latitude", "longitude", "major_axis", "minor_axis", "orientation"],
+              "properties": {
+                "startTime": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "payload": {
+                  "type": "array"
+                },
+                "latitude": {
+                  "type": "number"
+                },
+                "longitude": {
+                  "type": "number"
+                },
+                "major_axis": {
+                  "type": "number"
+                },
+                "minor_axis": {
+                  "type": "number"
+                },
+                "orientation": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
