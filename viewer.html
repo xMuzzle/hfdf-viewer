@@ -308,29 +308,19 @@
     }
 
     // -- COORDINATE CONVERSION --
-    function msFromVal(v) { return typeof v === 'number' ? v : new Date(v).getTime(); }
-
+    // Use Plotly's built-in axis methods so date axes are handled correctly.
     function dataToPixel(dataX, dataY) {
       if (!plotDiv || !plotDiv._fullLayout) return null;
       const xa = plotDiv._fullLayout.xaxis;
       const ya = plotDiv._fullLayout.yaxis;
-      const xr0 = xa.range[0], xr1 = xa.range[1];
-      const yr0 = msFromVal(ya.range[0]), yr1 = msFromVal(ya.range[1]);
-      if (xr1 === xr0 || yr1 === yr0) return null;
-      const px = xa._offset + (dataX - xr0) / (xr1 - xr0) * xa._length;
-      const py = ya._offset + ya._length * (1 - (dataY - yr0) / (yr1 - yr0));
-      return [px, py];
+      return [xa._offset + xa.d2p(dataX), ya._offset + ya.l2p(dataY)];
     }
 
     function pixelToData(px, py) {
       if (!plotDiv || !plotDiv._fullLayout) return null;
       const xa = plotDiv._fullLayout.xaxis;
       const ya = plotDiv._fullLayout.yaxis;
-      const xr0 = xa.range[0], xr1 = xa.range[1];
-      const yr0 = msFromVal(ya.range[0]), yr1 = msFromVal(ya.range[1]);
-      const dataX = xr0 + (px - xa._offset) / xa._length * (xr1 - xr0);
-      const dataY = yr0 + (1 - (py - ya._offset) / ya._length) * (yr1 - yr0);
-      return [dataX, dataY];
+      return [xa.p2d(px - xa._offset), ya.p2l(py - ya._offset)];
     }
 
     // -- CESIUM --
