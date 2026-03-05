@@ -618,6 +618,7 @@
         filterMenuToggleBtn.textContent = f.include ? 'INCLUDE' : 'EXCLUDE';
         filterMenuToggleBtn.classList.toggle('exclude', !f.include);
         renderBoxOverlays();
+        rebuildTable();
         updateScatterColors();
       } else {
         const f = lassoFilters[filterMenuIdx];
@@ -626,6 +627,7 @@
         f.polygon.polygon.material = c.fill;
         filterMenuToggleBtn.textContent = f.include ? 'INCLUDE' : 'EXCLUDE';
         filterMenuToggleBtn.classList.toggle('exclude', !f.include);
+        rebuildTable();
         updateScatterColors();
       }
     });
@@ -638,12 +640,14 @@
         selectedBoxIdx = -1;
         updateBoxClearBtn();
         renderBoxOverlays();
+        rebuildTable();
         updateScatterColors();
       } else {
         viewer.entities.remove(lassoFilters[filterMenuIdx].polygon);
         lassoFilters.splice(filterMenuIdx, 1);
         selectedLassoIdx = -1;
         updateLassoClearBtn();
+        rebuildTable();
         updateScatterColors();
       }
       filterMenuEl.classList.remove('visible');
@@ -736,6 +740,7 @@
       lassoFilters = [];
       hideFilterMenu();
       updateLassoClearBtn();
+      rebuildTable();
       updateScatterColors();
     });
 
@@ -804,6 +809,7 @@
       });
       lassoFilters.push({ set: inside, include: true, polygon });
       updateLassoClearBtn();
+      rebuildTable();
       updateScatterColors();
       lassoMode = false;
       viewer.scene.screenSpaceCameraController.enableInputs = true;
@@ -835,12 +841,22 @@
     function renderBoxOverlays() {
       boxOverlayEl.innerHTML = '';
       if (!plotDiv || !plotDiv._fullLayout) return;
+      // Compute plot area bounds for clipping
+      const xa = plotDiv._fullLayout.xaxis;
+      const ya = plotDiv._fullLayout.yaxis;
+      const plotL = xa._offset, plotR = xa._offset + xa._length;
+      const plotT = ya._offset, plotB = ya._offset + ya._length;
+
       boxFilters.forEach((f, idx) => {
         const p1 = dataToPixel(f.dataX1, f.dataY1);
         const p2 = dataToPixel(f.dataX2, f.dataY2);
         if (!p1 || !p2) return;
-        const pxL = Math.min(p1[0], p2[0]), pxR = Math.max(p1[0], p2[0]);
-        const pxT = Math.min(p1[1], p2[1]), pxB = Math.max(p1[1], p2[1]);
+        // Clamp box edges to plot area bounds
+        const pxL = Math.max(plotL, Math.min(p1[0], p2[0]));
+        const pxR = Math.min(plotR, Math.max(p1[0], p2[0]));
+        const pxT = Math.max(plotT, Math.min(p1[1], p2[1]));
+        const pxB = Math.min(plotB, Math.max(p1[1], p2[1]));
+        if (pxR <= pxL || pxB <= pxT) return; // fully outside
         const w = pxR - pxL, h = pxB - pxT;
         const color    = f.include ? '#4a9eff' : '#ff4444';
         const selected = idx === selectedBoxIdx;
@@ -858,10 +874,6 @@
         const del = document.createElement('button');
         del.className = 'box-del-btn';
         del.textContent = '\u00d7';
-        const showDel = () => del.style.opacity = '1';
-        const hideDel = () => del.style.opacity = '0';
-        del.addEventListener('mouseenter', showDel);
-        del.addEventListener('mouseleave', hideDel);
         del.addEventListener('click', e => {
           e.stopPropagation();
           boxFilters.splice(idx, 1);
@@ -875,6 +887,7 @@
           }
           updateBoxClearBtn();
           renderBoxOverlays();
+          rebuildTable();
           updateScatterColors();
         });
         wrap.appendChild(del);
@@ -889,14 +902,8 @@
           const side = document.createElement('div');
           side.style.cssText =
             `position:absolute;top:${t}px;left:${l}px;width:${sw}px;height:${sh}px;` +
-            `background:${bc};pointer-events:auto;cursor:pointer;` +
+            `background:${bc};pointer-events:none;` +
             (selected ? `box-shadow:0 0 6px ${color};` : '');
-          side.addEventListener('mouseenter', showDel);
-          side.addEventListener('mouseleave', hideDel);
-          side.addEventListener('click', e => {
-            e.stopPropagation();
-            showFilterMenu('box', idx, e.clientX, e.clientY);
-          });
           wrap.appendChild(side);
         });
 
@@ -919,6 +926,7 @@
       hideFilterMenu();
       updateBoxClearBtn();
       renderBoxOverlays();
+      rebuildTable();
       updateScatterColors();
     });
 
@@ -985,6 +993,7 @@
           boxFilters.push({ include: true, dataX1, dataX2, dataY1, dataY2 });
           updateBoxClearBtn();
           renderBoxOverlays();
+          rebuildTable();
           updateScatterColors();
           showFilterMenu('box', boxFilters.length - 1, e.clientX, e.clientY);
         }
@@ -1082,13 +1091,52 @@
             doubleClick: false
           });
 
+          let plotlyClickHandled = false;
           plotDiv.on('plotly_click', function(data) {
             if (!data || !data.points || data.points.length === 0) return;
+            plotlyClickHandled = true;
             const idx = data.points[0].pointIndex;
             selectTransmission(idx);
             zoomCesiumTo(idx);
             zoomScatterTo(idx);
           });
+
+          // Click inside a box filter area (when no dot was clicked) → show submenu
+          // Plotly's drag layer eats mouse events, so we use capture phase on document
+          let boxClickDown = null;
+          document.addEventListener('mousedown', function(e) {
+            if (boxSelectMode || boxFilters.length === 0) return;
+            const rect = scatterEl.getBoundingClientRect();
+            if (e.clientX < rect.left || e.clientX > rect.right ||
+                e.clientY < rect.top  || e.clientY > rect.bottom) return;
+            boxClickDown = { x: e.clientX, y: e.clientY };
+            plotlyClickHandled = false;
+          }, true);
+          document.addEventListener('mouseup', function(e) {
+            if (!boxClickDown) return;
+            const dx = e.clientX - boxClickDown.x, dy = e.clientY - boxClickDown.y;
+            const down = boxClickDown;
+            boxClickDown = null;
+            if (Math.abs(dx) > 5 || Math.abs(dy) > 5) return;
+            // Defer so plotly_click fires first if a dot was hit
+            setTimeout(() => {
+              if (plotlyClickHandled) { plotlyClickHandled = false; return; }
+              const rect = scatterEl.getBoundingClientRect();
+              const px = e.clientX - rect.left, py = e.clientY - rect.top;
+              for (let i = boxFilters.length - 1; i >= 0; i--) {
+                const f = boxFilters[i];
+                const p1 = dataToPixel(f.dataX1, f.dataY1);
+                const p2 = dataToPixel(f.dataX2, f.dataY2);
+                if (!p1 || !p2) continue;
+                const l = Math.min(p1[0], p2[0]), r = Math.max(p1[0], p2[0]);
+                const t = Math.min(p1[1], p2[1]), b = Math.max(p1[1], p2[1]);
+                if (px >= l && px <= r && py >= t && py <= b) {
+                  showFilterMenu('box', i, e.clientX, e.clientY);
+                  return;
+                }
+              }
+            }, 50);
+          }, true);
 
           plotDiv.on('plotly_doubleclick', function() {
             deselect();
@@ -1224,6 +1272,26 @@
       };
     }
 
+    function isDotVisibleIgnoringTable(i) {
+      // Same as isDotVisible but ignores table filter (to avoid circular dependency)
+      const x = items[i].t.frequency / 1e6;
+      const y = new Date(items[i].b.startTime).getTime();
+
+      function inFilter(f) {
+        if (f.dataX1 !== undefined) {
+          return x >= f.dataX1 && x <= f.dataX2 && y >= f.dataY1 && y <= f.dataY2;
+        }
+        return f.set.has(i);
+      }
+
+      const all      = [...lassoFilters, ...boxFilters];
+      const includes = all.filter(f =>  f.include);
+      const excludes = all.filter(f => !f.include);
+      if (includes.some(f => inFilter(f))) return true;
+      if (excludes.some(f => inFilter(f))) return false;
+      return includes.length === 0;
+    }
+
     function rebuildTable() {
       const filterCols = ['freq', 'time', 'lat', 'lon', 'srcIP', 'dstIP'];
       const parsedFilters = {};
@@ -1231,9 +1299,16 @@
         parsedFilters[col] = parseFilterExpr(tableFilters[col] || '');
       }
 
-      // filter
-      tableSortedIndices = [];
+      // Separate enabled (visible via box/lasso filters) from filtered-out items
+      const enabled = [], disabled = [];
       for (let i = 0; i < items.length; i++) {
+        if (isDotVisibleIgnoringTable(i)) enabled.push(i);
+        else disabled.push(i);
+      }
+
+      // Apply table column filters only to enabled items
+      tableSortedIndices = [];
+      for (const i of enabled) {
         const item = items[i];
         const texts = getColText(item, i);
         let pass = true;
@@ -1247,19 +1322,25 @@
         if (pass) tableSortedIndices.push(i);
       }
 
-      // sort
-      tableSortedIndices.sort((a, b) => {
-        let va = getColValue(items[a], a, tableSortCol);
-        let vb = getColValue(items[b], b, tableSortCol);
-        if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
-        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
-        return tableSortAsc ? cmp : -cmp;
-      });
+      // sort helper
+      function sortBy(arr) {
+        arr.sort((a, b) => {
+          let va = getColValue(items[a], a, tableSortCol);
+          let vb = getColValue(items[b], b, tableSortCol);
+          if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
+          const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+          return tableSortAsc ? cmp : -cmp;
+        });
+      }
 
-      // render
+      sortBy(tableSortedIndices);
+      sortBy(disabled);
+
+      // render: enabled rows first, then disabled rows at the bottom
       const tbody = document.getElementById('table-body');
       tbody.innerHTML = '';
-      tableSortedIndices.forEach(i => {
+      const allRows = [...tableSortedIndices, ...disabled];
+      allRows.forEach(i => {
         const item = items[i];
         const texts = getColText(item, i);
         const tr = document.createElement('tr');
@@ -1279,7 +1360,7 @@
       tableFilterSet = hasActiveTableFilter ? new Set(tableSortedIndices) : null;
 
       updateTableSelection();
-      updateScatterColors();
+      updateTableDimming();
     }
 
     function buildTable() {
@@ -1299,6 +1380,7 @@
         inp.addEventListener('input', () => {
           tableFilters[inp.dataset.col] = inp.value;
           rebuildTable();
+          updateScatterColors();
         });
       });
       // initial sort indicator
