@@ -916,6 +916,24 @@
             renderBoxOverlays();
           });
 
+          // Track box overlays continuously during scroll-zoom and drag-zoom,
+          // not just after the interaction ends (plotly_relayout fires too late).
+          let boxRaf = null;
+          function scheduleBoxUpdate() {
+            if (boxRaf) return;
+            boxRaf = requestAnimationFrame(() => { boxRaf = null; renderBoxOverlays(); });
+          }
+          plotDiv.addEventListener('wheel', scheduleBoxUpdate, { passive: true });
+          plotDiv.addEventListener('pointerdown', function() {
+            function onMove() { scheduleBoxUpdate(); }
+            function onUp() {
+              document.removeEventListener('pointermove', onMove);
+              document.removeEventListener('pointerup', onUp);
+            }
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+          });
+
           window.addEventListener('resize', () => { renderBoxOverlays(); });
         });
 
