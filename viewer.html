@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HFDF Transmission Viewer</title>
 
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 
   <script>window.CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.112.0/Build/Cesium/';</script>
   <script src="https://cdn.jsdelivr.net/npm/cesium@1.112.0/Build/Cesium/Cesium.js"></script>
@@ -172,7 +172,7 @@
       z-index: 101;
     }
 
-    /* × delete button on box filters */
+    /* x delete button on box filters */
     .box-del-btn {
       position: absolute;
       top: -1px;
@@ -206,6 +206,9 @@
       padding: 6px;
     }
     #filter-menu.visible { display: flex; }
+
+    /* Hide Plotly modebar */
+    .modebar { display: none !important; }
   </style>
 </head>
 <body>
@@ -221,7 +224,7 @@
         <span class="panel-label-text">FREQUENCY (MHz) vs DATETIME</span>
         <div class="panel-label-controls">
           <button class="ctrl-btn" id="box-btn">BOX SELECT</button>
-          <button class="ctrl-btn" id="box-clear-btn" style="display:none">✕ CLEAR</button>
+          <button class="ctrl-btn" id="box-clear-btn" style="display:none">x CLEAR</button>
         </div>
       </div>
       <div id="scatter">
@@ -236,40 +239,40 @@
       </div>
       <div id="cesium-container"></div>
       <div id="info-panel">
-        <div class="info-row">UUID &nbsp;&nbsp;: <span class="info-value" id="info-uuid">—</span></div>
-        <div class="info-row">BURST &nbsp;: <span class="info-value" id="info-burst">—</span></div>
-        <div class="info-row">FREQ &nbsp;&nbsp;: <span class="info-value" id="info-freq">—</span></div>
-        <div class="info-row">TIME &nbsp;&nbsp;: <span class="info-value" id="info-time">—</span></div>
-        <div class="info-row">LAT/LON: <span class="info-value" id="info-latlon">—</span></div>
-        <div class="info-row">MAJOR &nbsp;: <span class="info-value" id="info-major">—</span></div>
-        <div class="info-row">MINOR &nbsp;: <span class="info-value" id="info-minor">—</span></div>
-        <div class="info-row">ORIENT : <span class="info-value" id="info-orient">—</span></div>
+        <div class="info-row">UUID &nbsp;&nbsp;: <span class="info-value" id="info-uuid">--</span></div>
+        <div class="info-row">BURST &nbsp;: <span class="info-value" id="info-burst">--</span></div>
+        <div class="info-row">FREQ &nbsp;&nbsp;: <span class="info-value" id="info-freq">--</span></div>
+        <div class="info-row">TIME &nbsp;&nbsp;: <span class="info-value" id="info-time">--</span></div>
+        <div class="info-row">LAT/LON: <span class="info-value" id="info-latlon">--</span></div>
+        <div class="info-row">MAJOR &nbsp;: <span class="info-value" id="info-major">--</span></div>
+        <div class="info-row">MINOR &nbsp;: <span class="info-value" id="info-minor">--</span></div>
+        <div class="info-row">ORIENT : <span class="info-value" id="info-orient">--</span></div>
       </div>
       <div id="reset-hint">SCATTER DBL-CLICK: RESET &nbsp;|&nbsp; LASSO: LEFT=ADD PT &nbsp; RIGHT=CLOSE</div>
       <button id="view-toggle">2D MAP</button>
       <div id="lasso-controls">
         <button class="ctrl-btn" id="lasso-btn">LASSO</button>
-        <button class="ctrl-btn" id="lasso-clear-btn" style="display:none">✕ CLEAR</button>
+        <button class="ctrl-btn" id="lasso-clear-btn" style="display:none">x CLEAR</button>
       </div>
     </div>
   </div>
 
   <div id="filter-menu">
     <button class="ctrl-btn" id="filter-menu-toggle">INCLUDE</button>
-    <button class="ctrl-btn" id="filter-menu-delete">× DELETE</button>
+    <button class="ctrl-btn" id="filter-menu-delete">x DELETE</button>
   </div>
 
   <script>
-    // ── STATE ─────────────────────────────────────────────────────────────────
+    // -- STATE --
     let transmissions = [];
     let items         = [];
     let entities      = [];
     let selectedIdx   = null;
-    let chart         = null;
+    let plotDiv       = null;
 
     let dataXMin, dataXMax, dataYMin, dataYMax;
 
-    // ── FILTER STATE ──────────────────────────────────────────────────────────
+    // -- FILTER STATE --
     let lassoFilters = [];
     let boxFilters   = [];
 
@@ -277,7 +280,6 @@
       const x = items[i].t.frequency / 1e6;
       const y = new Date(items[i].b.startTime).getTime();
 
-      // Box filters use live data-coordinate bounds; lasso filters use precomputed geographic sets.
       function inFilter(f) {
         if (f.dataX1 !== undefined) {
           return x >= f.dataX1 && x <= f.dataX2 && y >= f.dataY1 && y <= f.dataY2;
@@ -288,27 +290,50 @@
       const all      = [...lassoFilters, ...boxFilters];
       const includes = all.filter(f =>  f.include);
       const excludes = all.filter(f => !f.include);
-      // Includes are checked first — a point inside any include is always shown.
-      // Excludes only remove points that no include is protecting.
       if (includes.some(f => inFilter(f))) return true;
       if (excludes.some(f => inFilter(f))) return false;
       return includes.length === 0;
     }
 
-    // ── ECHARTS DATA ──────────────────────────────────────────────────────────
-    function buildChartData() {
-      return items.map((item, i) => {
+    // -- PLOTLY DATA --
+    function buildMarkerStyle() {
+      const colors = [], sizes = [];
+      items.forEach((item, i) => {
         const visible  = isDotVisible(i);
         const selected = i === selectedIdx;
-        return {
-          value:      [item.t.frequency / 1e6, new Date(item.b.startTime).getTime()],
-          itemStyle:  { color: selected ? '#ff9600' : visible ? '#4a9eff' : 'rgba(80,80,100,0.15)' },
-          symbolSize: selected ? 14 : visible ? 8 : 4
-        };
+        colors.push(selected ? '#ff9600' : visible ? '#4a9eff' : 'rgba(80,80,100,0.15)');
+        sizes.push(selected ? 14 : visible ? 8 : 4);
       });
+      return { colors, sizes };
     }
 
-    // ── CESIUM ────────────────────────────────────────────────────────────────
+    // -- COORDINATE CONVERSION --
+    function msFromVal(v) { return typeof v === 'number' ? v : new Date(v).getTime(); }
+
+    function dataToPixel(dataX, dataY) {
+      if (!plotDiv || !plotDiv._fullLayout) return null;
+      const xa = plotDiv._fullLayout.xaxis;
+      const ya = plotDiv._fullLayout.yaxis;
+      const xr0 = xa.range[0], xr1 = xa.range[1];
+      const yr0 = msFromVal(ya.range[0]), yr1 = msFromVal(ya.range[1]);
+      if (xr1 === xr0 || yr1 === yr0) return null;
+      const px = xa._offset + (dataX - xr0) / (xr1 - xr0) * xa._length;
+      const py = ya._offset + ya._length * (1 - (dataY - yr0) / (yr1 - yr0));
+      return [px, py];
+    }
+
+    function pixelToData(px, py) {
+      if (!plotDiv || !plotDiv._fullLayout) return null;
+      const xa = plotDiv._fullLayout.xaxis;
+      const ya = plotDiv._fullLayout.yaxis;
+      const xr0 = xa.range[0], xr1 = xa.range[1];
+      const yr0 = msFromVal(ya.range[0]), yr1 = msFromVal(ya.range[1]);
+      const dataX = xr0 + (px - xa._offset) / xa._length * (xr1 - xr0);
+      const dataY = yr0 + (1 - (py - ya._offset) / ya._length) * (yr1 - yr0);
+      return [dataX, dataY];
+    }
+
+    // -- CESIUM --
     Cesium.Ion.defaultAccessToken = '';
 
     const viewer = new Cesium.Viewer('cesium-container', {
@@ -323,7 +348,7 @@
       new Cesium.UrlTemplateImageryProvider({
         url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
         subdomains: ['a','b','c','d'], minimumLevel: 0, maximumLevel: 19,
-        credit: '© CartoDB © OpenStreetMap contributors'
+        credit: '(c) CartoDB (c) OpenStreetMap contributors'
       })
     );
     tileLayer.brightness = 0.9;
@@ -351,10 +376,10 @@
       });
     }
 
-    // ── FILTER CONTEXT MENU ───────────────────────────────────────────────────
+    // -- FILTER CONTEXT MENU --
     let selectedBoxIdx   = -1;
     let selectedLassoIdx = -1;
-    let filterMenuType   = null; // 'box' | 'lasso'
+    let filterMenuType   = null;
     let filterMenuIdx    = -1;
 
     const filterMenuEl        = document.getElementById('filter-menu');
@@ -376,7 +401,6 @@
     }
 
     function showFilterMenu(type, idx, clientX, clientY) {
-      // Clear previous highlights
       if (selectedBoxIdx !== -1) { selectedBoxIdx = -1; renderBoxOverlays(); }
       if (selectedLassoIdx !== -1) { applyLassoHighlight(selectedLassoIdx, false); selectedLassoIdx = -1; }
 
@@ -395,7 +419,6 @@
       filterMenuToggleBtn.textContent = f.include ? 'INCLUDE' : 'EXCLUDE';
       filterMenuToggleBtn.classList.toggle('exclude', !f.include);
 
-      // Keep menu inside viewport
       const mw = 120, mh = 70;
       const x = Math.min(clientX + 8, window.innerWidth  - mw);
       const y = Math.min(clientY + 8, window.innerHeight - mh);
@@ -427,7 +450,6 @@
         f.include = !f.include;
         const c = lassoPolygonColor(f);
         f.polygon.polygon.material = c.fill;
-        // Keep white selection outline until dismissed
         filterMenuToggleBtn.textContent = f.include ? 'INCLUDE' : 'EXCLUDE';
         filterMenuToggleBtn.classList.toggle('exclude', !f.include);
         updateScatterColors();
@@ -455,9 +477,6 @@
       filterMenuIdx  = -1;
     });
 
-    // Dismiss when clicking outside the menu.
-    // suppressMenuHide prevents the DOM click event (which fires after Cesium's
-    // mouseup-based LEFT_CLICK) from immediately closing a menu we just opened.
     let suppressMenuHide = false;
     document.addEventListener('click', e => {
       if (suppressMenuHide) { suppressMenuHide = false; return; }
@@ -469,8 +488,6 @@
       if (lassoMode) return;
       const picks = viewer.scene.drillPick(click.position);
 
-      // Data points are rendered on top of polygon fills, so check them first.
-      // A data-point entity has a numeric description; lasso polygons do not.
       const dotPick = picks.find(p => {
         if (!Cesium.defined(p.id) || !Cesium.defined(p.id.description)) return false;
         const v = p.id.description.getValue ? p.id.description.getValue() : p.id.description;
@@ -488,7 +505,6 @@
         return;
       }
 
-      // No dot — check for a lasso polygon anywhere in the pick list
       const lassoPick = picks.find(p => Cesium.defined(p.id) && lassoFilters.some(f => f.polygon === p.id));
       if (lassoPick) {
         const lassoIdx = lassoFilters.findIndex(f => f.polygon === lassoPick.id);
@@ -504,7 +520,6 @@
     clickHandler.setInputAction(function() {
       if (lassoMode) return;
       deselect();
-      // Reset zoom to overview altitude, keeping current lat/lon position
       const pos = viewer.camera.positionCartographic;
       viewer.camera.flyTo({
         destination: Cesium.Cartesian3.fromDegrees(
@@ -521,7 +536,7 @@
       viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(b.longitude, b.latitude, 600000), duration: 1.5 });
     }
 
-    // ── LASSO (globe) ─────────────────────────────────────────────────────────
+    // -- LASSO (globe) --
     let lassoMode = false, lassoPoints = [], lassoPolyline = null, lassoVertices = [];
 
     const lassoBtnEl      = document.getElementById('lasso-btn');
@@ -531,7 +546,7 @@
     function updateLassoClearBtn() {
       const n = lassoFilters.length;
       lassoClearBtnEl.style.display = n > 0 ? 'block' : 'none';
-      lassoClearBtnEl.textContent   = `✕ CLEAR (${n})`;
+      lassoClearBtnEl.textContent   = `\u2715 CLEAR (${n})`;
     }
 
     lassoBtnEl.addEventListener('click', () => {
@@ -605,7 +620,6 @@
         if (inPoly) inside.add(i);
       });
       clearLassoDrawing();
-      // New lassos default to INCLUDE; use the context menu to switch mode
       const fill    = Cesium.Color.fromCssColorString('#4a9eff').withAlpha(0.18);
       const outline = Cesium.Color.fromCssColorString('#4a9eff').withAlpha(0.8);
       const polygon = viewer.entities.add({
@@ -627,12 +641,12 @@
     lassoHandler.setInputAction(e => { if (!lassoMode) return; addLassoVertex(e.position); }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
     lassoHandler.setInputAction(e => { if (!lassoMode) return; closeLasso(); }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
 
-    // ── BOX SELECT — custom CSS overlay, no ECharts brush ─────────────────────
+    // -- BOX SELECT --
     let boxSelectMode = false;
     let boxDragStart  = null;
     let boxDragActive = false;
 
-    const boxBtnEl    = document.getElementById('box-btn');
+    const boxBtnEl      = document.getElementById('box-btn');
     const boxClearBtnEl = document.getElementById('box-clear-btn');
     const boxOverlayEl  = document.getElementById('box-overlay');
     const boxDrawEl     = document.getElementById('box-draw');
@@ -641,19 +655,15 @@
     function updateBoxClearBtn() {
       const n = boxFilters.length;
       boxClearBtnEl.style.display = n > 0 ? 'block' : 'none';
-      boxClearBtnEl.textContent   = `✕ CLEAR (${n})`;
+      boxClearBtnEl.textContent   = `\u2715 CLEAR (${n})`;
     }
 
-    // Redraws all persistent filter box rectangles, converting stored data coords to
-    // current pixel positions so boxes track the chart when zoomed/panned.
-    // Interior is pointer-events:none so clicks pass through to the ECharts dots.
-    // Only the 4 border edges and the × button are interactive.
     function renderBoxOverlays() {
       boxOverlayEl.innerHTML = '';
-      if (!chart) return;
+      if (!plotDiv || !plotDiv._fullLayout) return;
       boxFilters.forEach((f, idx) => {
-        const p1 = chart.convertToPixel({ seriesIndex: 0 }, [f.dataX1, f.dataY1]);
-        const p2 = chart.convertToPixel({ seriesIndex: 0 }, [f.dataX2, f.dataY2]);
+        const p1 = dataToPixel(f.dataX1, f.dataY1);
+        const p2 = dataToPixel(f.dataX2, f.dataY2);
         if (!p1 || !p2) return;
         const pxL = Math.min(p1[0], p2[0]), pxR = Math.max(p1[0], p2[0]);
         const pxT = Math.min(p1[1], p2[1]), pxB = Math.max(p1[1], p2[1]);
@@ -663,20 +673,17 @@
         const bw       = selected ? 2 : 1;
         const bc       = selected ? '#fff' : color;
 
-        // Wrapper: no pointer events, just positions children
         const wrap = document.createElement('div');
         wrap.style.cssText = `position:absolute;pointer-events:none;` +
           `left:${pxL}px;top:${pxT}px;width:${w}px;height:${h}px;`;
 
-        // Semi-transparent fill — passes clicks through to the chart
         const bg = document.createElement('div');
         bg.style.cssText = `position:absolute;inset:0;background:${color}22;pointer-events:none;`;
         wrap.appendChild(bg);
 
-        // × delete button
         const del = document.createElement('button');
         del.className = 'box-del-btn';
-        del.textContent = '×';
+        del.textContent = '\u00d7';
         const showDel = () => del.style.opacity = '1';
         const hideDel = () => del.style.opacity = '0';
         del.addEventListener('mouseenter', showDel);
@@ -698,7 +705,6 @@
         });
         wrap.appendChild(del);
 
-        // 4 clickable border-edge strips [top, left, width, height]
         const sides = [
           [0,    0,    w,  bw],
           [h-bw, 0,    w,  bw],
@@ -728,11 +734,8 @@
       boxSelectMode = !boxSelectMode;
       boxBtnEl.classList.toggle('active', boxSelectMode);
       scatterEl.style.cursor = boxSelectMode ? 'crosshair' : '';
-      if (chart) {
-        chart.setOption({ dataZoom: [
-          { type: 'inside', xAxisIndex: 0, disabled: boxSelectMode },
-          { type: 'inside', yAxisIndex: 0, disabled: boxSelectMode }
-        ]});
+      if (plotDiv) {
+        Plotly.relayout(plotDiv, { dragmode: boxSelectMode ? false : 'zoom' });
       }
     });
 
@@ -745,7 +748,6 @@
       updateScatterColors();
     });
 
-    // Box drag — mousedown on scatter, mousemove/mouseup on document (handles leaving div)
     scatterEl.addEventListener('mousedown', (e) => {
       if (!boxSelectMode) return;
       const rect = scatterEl.getBoundingClientRect();
@@ -772,7 +774,7 @@
       if (!boxSelectMode || !boxDragStart) return;
       boxDrawEl.style.display = 'none';
 
-      if (boxDragActive && chart) {
+      if (boxDragActive && plotDiv && plotDiv._fullLayout) {
         const rect = scatterEl.getBoundingClientRect();
         const end  = { x: e.clientX - rect.left, y: e.clientY - rect.top };
 
@@ -781,19 +783,18 @@
 
         const inside = new Set();
         items.forEach((item, i) => {
-          const pt = chart.convertToPixel({ seriesIndex: 0 },
-            [item.t.frequency / 1e6, new Date(item.b.startTime).getTime()]);
+          const pt = dataToPixel(
+            item.t.frequency / 1e6,
+            new Date(item.b.startTime).getTime()
+          );
           if (!pt) return;
           if (pt[0] >= pxL && pt[0] <= pxR && pt[1] >= pxT && pt[1] <= pxB) inside.add(i);
         });
 
         if (inside.size > 0) {
-          // Convert pixel rect to data coordinates so the box tracks zoom/pan.
-          // convertFromPixel can return null if corners land in the axis margin;
-          // fall back to the bounding box of the matched points in that case.
           let dataX1, dataX2, dataY1, dataY2;
-          const tl = chart.convertFromPixel({ seriesIndex: 0 }, [pxL, pxT]);
-          const br = chart.convertFromPixel({ seriesIndex: 0 }, [pxR, pxB]);
+          const tl = pixelToData(pxL, pxT);
+          const br = pixelToData(pxR, pxB);
           if (tl && br) {
             dataX1 = Math.min(tl[0], br[0]); dataX2 = Math.max(tl[0], br[0]);
             dataY1 = Math.min(tl[1], br[1]); dataY2 = Math.max(tl[1], br[1]);
@@ -807,12 +808,10 @@
             const yPad = (dataY2 - dataY1) * 0.05 || 60000;
             dataX1 -= xPad; dataX2 += xPad; dataY1 -= yPad; dataY2 += yPad;
           }
-          // New boxes default to INCLUDE; use the context menu to switch mode
-          boxFilters.push({ set: inside, include: true, dataX1, dataX2, dataY1, dataY2 });
+          boxFilters.push({ include: true, dataX1, dataX2, dataY1, dataY2 });
           updateBoxClearBtn();
           renderBoxOverlays();
           updateScatterColors();
-          // Auto-open the menu so user can change mode immediately
           showFilterMenu('box', boxFilters.length - 1, e.clientX, e.clientY);
         }
       }
@@ -821,8 +820,8 @@
       boxDragActive = false;
     });
 
-    // ── LOAD DATA ─────────────────────────────────────────────────────────────
-    document.getElementById('status').textContent = 'LOADING…';
+    // -- LOAD DATA --
+    document.getElementById('status').textContent = 'LOADING\u2026';
     fetch('data.json')
       .then(r => r.json())
       .then(data => {
@@ -853,107 +852,132 @@
           });
         });
 
-        // ── ECHARTS INIT ─────────────────────────────────────────────────────
+        // -- PLOTLY INIT --
         requestAnimationFrame(() => {
-          chart = echarts.init(document.getElementById('scatter-chart'), null, { renderer: 'canvas' });
+          plotDiv = document.getElementById('scatter-chart');
 
-          const axisStyle = {
-            axisLine:  { lineStyle: { color: '#1a3050' } },
-            axisTick:  { lineStyle: { color: '#4a9eff' } },
-            axisLabel: { color: '#8aa8d0', fontFamily: 'Courier New', fontSize: 9 },
-            splitLine: { lineStyle: { color: '#1a3050' } }
-          };
+          const { colors, sizes } = buildMarkerStyle();
 
-          chart.setOption({
-            backgroundColor: '#0c1525',
-            animation: false,
-            dataZoom: [
-              { type: 'inside', xAxisIndex: 0 },
-              { type: 'inside', yAxisIndex: 0 }
-            ],
-            grid: { left: 85, right: 20, top: 20, bottom: 55 },
-            xAxis: {
-              type: 'value', name: 'FREQUENCY (MHz)', nameLocation: 'middle', nameGap: 38,
-              nameTextStyle: { color: '#4a9eff', fontSize: 10, fontFamily: 'Courier New' }, ...axisStyle
+          Plotly.newPlot(plotDiv, [{
+            x: items.map(item => item.t.frequency / 1e6),
+            y: items.map(item => item.b.startTime),
+            mode: 'markers',
+            type: 'scatter',
+            marker: {
+              color: colors,
+              size: sizes,
+              symbol: 'diamond',
+              line: { color: '#0c1220', width: 1 }
             },
-            yAxis: {
-              type: 'time', name: 'DATETIME (UTC)', nameLocation: 'middle', nameGap: 70,
-              nameTextStyle: { color: '#4a9eff', fontSize: 10, fontFamily: 'Courier New' }, ...axisStyle
+            hoverinfo: 'text',
+            text: items.map(item =>
+              `<b>${(item.t.frequency / 1e6).toFixed(3)} MHz</b><br>${item.b.startTime.replace('T',' ').replace('Z',' UTC')}`
+            ),
+            hoverlabel: {
+              bgcolor: 'rgba(8,13,26,0.92)',
+              bordercolor: '#1a3050',
+              font: { color: '#c8d8f0', size: 10, family: 'Courier New' }
+            }
+          }], {
+            paper_bgcolor: '#0c1525',
+            plot_bgcolor: '#0c1525',
+            margin: { l: 85, r: 20, t: 20, b: 55 },
+            xaxis: {
+              title: { text: 'FREQUENCY (MHz)', font: { color: '#4a9eff', size: 10, family: 'Courier New' }, standoff: 15 },
+              color: '#8aa8d0',
+              gridcolor: '#1a3050',
+              linecolor: '#1a3050',
+              zerolinecolor: '#1a3050',
+              tickfont: { color: '#8aa8d0', family: 'Courier New', size: 9 }
             },
-            tooltip: {
-              trigger: 'item',
-              backgroundColor: 'rgba(8,13,26,0.92)', borderColor: '#1a3050', padding: [6, 10],
-              textStyle: { color: '#c8d8f0', fontSize: 10, fontFamily: 'Courier New' },
-              formatter: (params) => {
-                const item = items[params.dataIndex];
-                return `<b>${(item.t.frequency / 1e6).toFixed(3)} MHz</b><br>${item.b.startTime.replace('T',' ').replace('Z',' UTC')}`;
-              }
+            yaxis: {
+              title: { text: 'DATETIME (UTC)', font: { color: '#4a9eff', size: 10, family: 'Courier New' }, standoff: 15 },
+              type: 'date',
+              color: '#8aa8d0',
+              gridcolor: '#1a3050',
+              linecolor: '#1a3050',
+              zerolinecolor: '#1a3050',
+              tickfont: { color: '#8aa8d0', family: 'Courier New', size: 9 }
             },
-            series: [{ type: 'scatter', symbol: 'diamond', data: buildChartData(), emphasis: { scale: false } }]
+            hovermode: 'closest',
+            dragmode: 'zoom'
+          }, {
+            responsive: true,
+            displayModeBar: false,
+            scrollZoom: true,
+            doubleClick: false
           });
 
-          window.addEventListener('resize', () => { chart.resize(); renderBoxOverlays(); });
-          chart.on('datazoom', renderBoxOverlays);
-          chart.on('restore',  renderBoxOverlays);
-
-          chart.on('click', function(params) {
-            if (params.componentType !== 'series') return;
-            selectTransmission(params.dataIndex);
-            zoomCesiumTo(params.dataIndex);
-            zoomScatterTo(params.dataIndex);
+          plotDiv.on('plotly_click', function(data) {
+            if (!data || !data.points || data.points.length === 0) return;
+            const idx = data.points[0].pointIndex;
+            selectTransmission(idx);
+            zoomCesiumTo(idx);
+            zoomScatterTo(idx);
           });
 
-          chart.getZr().on('dblclick', function() {
+          plotDiv.on('plotly_doubleclick', function() {
             deselect();
             resetScatterZoom();
+            return false;
           });
+
+          plotDiv.on('plotly_relayout', function() {
+            renderBoxOverlays();
+          });
+
+          window.addEventListener('resize', () => { renderBoxOverlays(); });
         });
 
-        document.getElementById('status').textContent = `READY — ${transmissions.length} TX | ${items.length} BURSTS`;
+        document.getElementById('status').textContent = `READY \u2014 ${transmissions.length} TX | ${items.length} BURSTS`;
       })
       .catch(err => {
         document.getElementById('status').textContent = 'ERR: serve via HTTP server';
         console.error(err);
       });
 
-    // ── HELPERS ───────────────────────────────────────────────────────────────
+    // -- HELPERS --
     function zoomScatterTo(idx) {
-      if (!chart) return;
+      if (!plotDiv) return;
       const { t, b } = items[idx];
       const dt = new Date(b.startTime).getTime();
-      chart.setOption({
-        xAxis: { min: (t.frequency - 3e6) / 1e6, max: (t.frequency + 3e6) / 1e6 },
-        yAxis: { min: dt - 45 * 60000, max: dt + 45 * 60000 }
+      Plotly.relayout(plotDiv, {
+        'xaxis.range': [(t.frequency - 3e6) / 1e6, (t.frequency + 3e6) / 1e6],
+        'yaxis.range': [new Date(dt - 45 * 60000).toISOString(), new Date(dt + 45 * 60000).toISOString()]
       });
-      renderBoxOverlays();
     }
 
     function resetScatterZoom() {
-      if (!chart) return;
+      if (!plotDiv) return;
       const xPad = (dataXMax - dataXMin) * 0.05 || 1;
       const yPad = (dataYMax - dataYMin) * 0.05 || 60000;
-      chart.setOption({
-        xAxis: { min: dataXMin - xPad, max: dataXMax + xPad },
-        yAxis: { min: dataYMin - yPad, max: dataYMax + yPad }
+      Plotly.relayout(plotDiv, {
+        'xaxis.range': [dataXMin - xPad, dataXMax + xPad],
+        'yaxis.range': [new Date(dataYMin - yPad).toISOString(), new Date(dataYMax + yPad).toISOString()]
       });
-      renderBoxOverlays();
     }
 
     function updateInfoPanel(idx) {
       const { t, b, burstIdx } = items[idx];
-      document.getElementById('info-uuid').textContent   = t.transmissionUUID ? t.transmissionUUID.substring(0, 13) + '…' : '—';
+      document.getElementById('info-uuid').textContent   = t.transmissionUUID ? t.transmissionUUID.substring(0, 13) + '\u2026' : '--';
       document.getElementById('info-burst').textContent  = `${burstIdx + 1} / ${t.numBursts}`;
       document.getElementById('info-freq').textContent   = `${(t.frequency / 1e6).toFixed(3)} MHz`;
       document.getElementById('info-time').textContent   = b.startTime.replace('T', ' ').replace('Z', ' UTC');
       document.getElementById('info-latlon').textContent = `${b.latitude.toFixed(3)}, ${b.longitude.toFixed(3)}`;
       document.getElementById('info-major').textContent  = `${b.major_axis} mi`;
       document.getElementById('info-minor').textContent  = `${b.minor_axis} mi`;
-      document.getElementById('info-orient').textContent = `${b.orientation}°`;
+      document.getElementById('info-orient').textContent = `${b.orientation}\u00b0`;
       document.getElementById('info-panel').classList.add('visible');
     }
 
     function updateScatterColors() {
-      if (chart) chart.setOption({ series: [{ data: buildChartData() }] });
+      if (plotDiv) {
+        const { colors, sizes } = buildMarkerStyle();
+        Plotly.restyle(plotDiv, {
+          'marker.color': [colors],
+          'marker.size': [sizes]
+        }, [0]);
+      }
       updateCesiumColors();
     }
 
@@ -963,7 +987,7 @@
       updateScatterColors();
       updateInfoPanel(idx);
       const { txIdx, burstIdx, t } = items[idx];
-      document.getElementById('status').textContent = `TX ${txIdx + 1}/${transmissions.length} · BURST ${burstIdx + 1}/${t.numBursts}`;
+      document.getElementById('status').textContent = `TX ${txIdx + 1}/${transmissions.length} \u00b7 BURST ${burstIdx + 1}/${t.numBursts}`;
     }
 
     function deselect() {
